@@ -1,0 +1,288 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Electron + FastAPI Chat</title>
+    <style>
+      :root {
+        --bg: #ffffff;
+        --fg: #111111;
+        --bubble-user: #eef;
+        --bubble-assistant: #efe;
+        --bubble-system: #f5f5f5;
+        --accent: #444;
+      }
+      [data-theme="dark"] {
+        --bg: #0f1115;
+        --fg: #e6e6e6;
+        --bubble-user: #2b3553;
+        --bubble-assistant: #1f3a2c;
+        --bubble-system: #1b1e24;
+        --accent: #999;
+      }
+      body { font-family: system-ui, sans-serif; margin: 0; padding: 16px; background: var(--bg); color: var(--fg); }
+      .container { max-width: 980px; margin: 0 auto; }
+      .row { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; flex-wrap: wrap; }
+      #messages { border: 1px solid #ddd; padding: 12px; height: 460px; overflow-y: auto; background: var(--bg); color: var(--fg); }
+      .msg { margin: 8px 0; padding: 8px 10px; border-radius: 8px; }
+      .user { background: var(--bubble-user); }
+      .assistant { background: var(--bubble-assistant); }
+      .system { background: var(--bubble-system); }
+      textarea { width: 100%; height: 90px; background: var(--bg); color: var(--fg); }
+      button { padding: 8px 12px; }
+      input[type="text"], select { padding: 6px 8px; background: var(--bg); color: var(--fg); }
+      label { font-size: 14px; }
+      .status { font-size: 12px; color: var(--accent); }
+      .spacer { flex: 1; }
+      .pill { padding: 4px 10px; border-radius: 999px; font-size: 12px; border: 1px solid #ccc; }
+      .pill.green { background: #1b5e20; color: #fff; }
+      .pill.yellow { background: #827717; color: #fff; }
+      .pill.red { background: #b71c1c; color: #fff; }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>Electron + FastAPI Chat</h1>
+      <div class="status">Backend: http://127.0.0.1:8000/chat</div>
+
+      <div class="row">
+        <label style="display:flex;align-items:center;gap:6px;">
+          <input type="checkbox" id="useOllama" /> Use Ollama
+        </label>
+        <select id="modelSelect">
+          <option value="">(fetching models...)</option>
+        </select>
+        <input type="text" id="model" placeholder="Or type model (e.g., gpt-oss:20b)" />
+
+        <label style="display:flex;align-items:center;gap:6px;">
+          <input type="checkbox" id="themeToggle" /> Dark mode
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;">
+          User text <input type="color" id="userColor" value="#000000" />
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;">
+          Assistant text <input type="color" id="assistantColor" value="#000000" />
+        </label>
+
+        <div class="spacer"></div>
+        <span id="statusPill" class="pill yellow">Idle</span>
+        <button id="newChatBtn">New Chat</button>
+        <button id="healthBtn">Check Health</button>
+      </div>
+
+      <div id="messages"></div>
+
+      <div class="row">
+        <textarea id="input" placeholder="Type your message..."></textarea>
+      </div>
+      <div class="row">
+        <button id="sendBtn">Send (Ctrl+Enter)</button>
+        <button id="clearBtn">Clear</button>
+      </div>
+    </div>
+
+<script>
+  const messagesEl = document.getElementById('messages');
+  const inputEl = document.getElementById('input');
+  const sendBtn = document.getElementById('sendBtn');
+  const clearBtn = document.getElementById('clearBtn');
+  const healthBtn = document.getElementById('healthBtn');
+  const useOllamaEl = document.getElementById('useOllama');
+  const modelEl = document.getElementById('model');
+  const modelSelect = document.getElementById('modelSelect');
+  const themeToggle = document.getElementById('themeToggle');
+  const userColor = document.getElementById('userColor');
+  const assistantColor = document.getElementById('assistantColor');
+  const newChatBtn = document.getElementById('newChatBtn');
+  const statusPill = document.getElementById('statusPill');
+
+  const CHAT_URL = "http://127.0.0.1:8000/chat";
+  const HEALTH_URL = "http://127.0.0.1:8000/health";
+  const MODELS_URL = "http://127.0.0.1:8000/models";
+
+  // --- Defaults / stickies ---
+  const DEFAULT_MODEL = 'gpt-oss:20b';
+
+  // First-run default: turn Use Ollama on unless user changed it
+  if (localStorage.getItem('useOllama') === null) {
+    localStorage.setItem('useOllama', 'true');
+  }
+  useOllamaEl.checked = JSON.parse(localStorage.getItem('useOllama') ?? 'true');
+  useOllamaEl.addEventListener('change', () => {
+    localStorage.setItem('useOllama', JSON.stringify(!!useOllamaEl.checked));
+  });
+
+  // Prime the model box from saved value or default; persist on edit
+  const savedModel = localStorage.getItem('modelName');
+  if (!modelEl.value) modelEl.value = savedModel || DEFAULT_MODEL;
+  modelEl.addEventListener('input', () => {
+    localStorage.setItem('modelName', modelEl.value.trim());
+  });
+
+  function setPill(state, text) {
+    statusPill.className = 'pill ' + (state || 'yellow');
+    statusPill.textContent = text || (state === 'green' ? 'OK' : state === 'red' ? 'Error' : 'Idle');
+  }
+
+  // ---- Wait for backend to be ready before we do anything noisy ----
+  function sleep(ms){ return new Promise(r => setTimeout(r, ms)); }
+  async function waitForBackend(maxTries=60, delayMs=1000) {
+    for (let i=0; i<maxTries; i++) {
+      try {
+        const r = await fetch(HEALTH_URL, { cache: 'no-store' });
+        if (r.ok) { setPill('green','Backend OK'); return true; }
+      } catch {}
+      setPill('yellow', `Starting… (${i+1}/${maxTries})`);
+      await sleep(delayMs);
+    }
+    setPill('red','Backend unreachable');
+    return false;
+  }
+
+  // --- Preferences (theme & colors) ---
+  function applyPrefs() {
+    const theme = localStorage.getItem('theme') || 'light';
+    document.documentElement.setAttribute('data-theme', theme);
+    themeToggle.checked = theme === 'dark';
+
+    const uc = localStorage.getItem('userColor') || '#000000';
+    const ac = localStorage.getItem('assistantColor') || '#000000';
+    userColor.value = uc; assistantColor.value = ac;
+    const styleId = 'colorOverride';
+    let tag = document.getElementById(styleId);
+    if (!tag) { tag = document.createElement('style'); tag.id = styleId; document.head.appendChild(tag); }
+    tag.textContent = `.msg.user { color: ${uc}; } .msg.assistant { color: ${ac}; }`;
+  }
+  themeToggle.addEventListener('change', () => {
+    localStorage.setItem('theme', themeToggle.checked ? 'dark' : 'light');
+    applyPrefs();
+  });
+  userColor.addEventListener('input', () => { localStorage.setItem('userColor', userColor.value); applyPrefs(); });
+  assistantColor.addEventListener('input', () => { localStorage.setItem('assistantColor', assistantColor.value); applyPrefs(); });
+  applyPrefs();
+
+  // --- Conversation tracking ---
+  function uuid() {
+    return ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, c =>
+      (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16)
+    );
+  }
+  let conversationId = localStorage.getItem('conversationId') || uuid();
+  localStorage.setItem('conversationId', conversationId);
+  newChatBtn.addEventListener('click', () => {
+    conversationId = uuid();
+    localStorage.setItem('conversationId', conversationId);
+    messagesEl.innerHTML = '';
+    appendMessage('System', 'Started a new chat.', 'system');
+  });
+
+  function appendMessage(sender, text, cssClass) {
+    const div = document.createElement('div');
+    div.className = `msg ${cssClass}`;
+    div.textContent = `${sender}: ${text}`;
+    messagesEl.appendChild(div);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
+
+  // --- Model dropdown ---
+  async function loadModels() {
+    try {
+      const resp = await fetch(MODELS_URL, { cache: 'no-store' });
+      const data = await resp.json();
+      modelSelect.innerHTML = '<option value="">(select model)</option>';
+      (data.models || []).forEach(name => {
+        const opt = document.createElement('option');
+        opt.value = name; opt.textContent = name;
+        modelSelect.appendChild(opt);
+      });
+    } catch (e) {
+      modelSelect.innerHTML = '<option value="">(failed to fetch models)</option>';
+    }
+  }
+  modelSelect.addEventListener('change', () => {
+    if (modelSelect.value) {
+      modelEl.value = modelSelect.value;
+      localStorage.setItem('modelName', modelSelect.value);   // persist selection
+    }
+  });
+
+  // Wait for backend, then load models, then enable Send
+  sendBtn.disabled = true;
+  (async () => {
+    const ok = await waitForBackend();
+    if (ok) {
+      await loadModels().catch(()=>{});
+      sendBtn.disabled = false;
+    }
+  })();
+
+  async function sendMessage() {
+    const msg = inputEl.value.trim();
+    if (!msg) return;
+    appendMessage('You', msg, 'user');
+    inputEl.value = '';
+
+    try {
+      setPill('yellow', 'Working...');
+
+      // Determine model: typed > dropdown > default
+      const modelName =
+        (modelEl.value && modelEl.value.trim()) ||
+        (modelSelect.value && modelSelect.value.trim()) ||
+        DEFAULT_MODEL;
+
+      const usingOllama = !!useOllamaEl.checked;
+
+      const body = {
+        message: msg,
+        conversation_id: conversationId,
+        // If Use Ollama is checked, force model path; else allow local fallback
+        use_ollama: usingOllama ? true : false,
+        model: usingOllama ? modelName : undefined
+      };
+
+      const resp = await fetch(CHAT_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+
+      if (!resp.ok) {
+        const text = await resp.text();
+        appendMessage('Assistant', `Error ${resp.status}: ${text}`, 'assistant');
+        setPill('red', 'HTTP ' + resp.status);
+        return;
+      }
+
+      const data = await resp.json();
+      appendMessage('Assistant', data.response ?? '[No reply]', 'assistant');
+      const used = (data.meta && data.meta.used_ollama) ? true : false;
+      setPill(used ? 'green' : 'yellow', used ? 'Model' : 'Fallback');
+    } catch (err) {
+      appendMessage('Assistant', `Request failed: ${err}`, 'assistant');
+      setPill('red', 'Network');
+    }
+  }
+
+  async function checkHealth() {
+    try {
+      const resp = await fetch(HEALTH_URL, { cache: 'no-store' });
+      const data = await resp.json();
+      appendMessage('System', JSON.stringify(data), 'system');
+      setPill('green', 'Health OK');
+    } catch (e) {
+      appendMessage('System', `Health check failed: ${e}`, 'system');
+      setPill('red', 'Health fail');
+    }
+  }
+
+  sendBtn.addEventListener('click', sendMessage);
+  clearBtn.addEventListener('click', () => { messagesEl.innerHTML = ''; });
+  healthBtn.addEventListener('click', checkHealth);
+  inputEl.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) sendMessage();
+  });
+</script>
+
+  </body>
+</html>

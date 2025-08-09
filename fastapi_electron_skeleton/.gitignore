@@ -1,0 +1,30 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Node
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# Environment
+.env
+.env.*
+
+# Logs
+*.log
+logs/
+*.pid
+
+# Build output
+dist/
+build/
+*.exe
+*.dll
+
+# OS files
+.DS_Store
+Thumbs.db
