@@ -1,0 +1,65 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pdb
+*.tmp
+*.log
+*.pot
+*.pyc
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+env/
+venv/
+ENV/
+.env
+
+# ---- Virtual Environment ----
+.venv/
+Scripts/
+Include/
+Lib/
+pyvenv.cfg
+
+# ---- Node / Electron ----
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+.DS_Store
+dist/
+build/
+out/
+*.asar
+
+# ---- FastAPI / local data ----
+*.sqlite3
+*.db
+*.sqlite
+uploads/
+media/
+
+# ---- VSCode / Editor ----
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# ---- OS files ----
+Thumbs.db
+ehthumbs.db
+Icon?
+.DS_Store
+Desktop.ini
+
+# ---- Ollama ----
+# Skip model binaries/cache (local only)
+*.bin
+*.gguf
+*.ggml
+ollama_models/
